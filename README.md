@@ -6,8 +6,7 @@
 
 
 
-##### 2. Translate your question into a formal target causal parameter, dened using counter-
-factuals.
+##### 2. Translate your question into a formal target causal parameter, defined using counter-factuals.
 
 
 
