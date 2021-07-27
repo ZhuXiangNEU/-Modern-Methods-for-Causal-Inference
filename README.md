@@ -1,6 +1,5 @@
 # Effect of Treatments on Glottic Cancer
 
-#### Xiang Zhu & Shutian Lin (Group 6)
 
 ##### 1. Specify a Causal Model.
 
