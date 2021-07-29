@@ -1,0 +1,169 @@
+---
+title: "Effect of Treatments on Glottic Cancer"
+author: "Xiang Zhu & Shutian Lin (Group 6)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+   df_print: paged
+   toc: true 
+   toc_depth: 4
+   code_download: true
+   code_folding: show
+   number_sections: false
+   theme: simplex 
+   highlight: tango 
+   toc_float:
+     collapsed: true
+     smooth_scroll: true
+---
+
+```{r,echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE, cache=TRUE, error=FALSE, message=FALSE, warning=FALSE, tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+
+```{r, results = FALSE}
+library(tidyverse)
+library(readxl)
+library(table1)
+library(magrittr)
+library(dplyr)
+
+glottic <- read_excel("Glottic_Cancer_Data_Set_011521.xlsx")
+
+# Check for missing value for each column
+apply(glottic, 2, function(x) {
+    sum(is.na(x))
+})
+```
+
+```{r}
+glottic <- glottic %>%
+  filter(Death_Status != 1) %>%
+  filter(!is.na(Age_dx)) %>%
+  filter(Rad_Tx_Status != "U", Rad_Tx_Status == "0.00" | Rad_Tx_Status == "1.00") %>%
+  mutate(Rad_Tx_Status = as.numeric(Rad_Tx_Status)) %>%
+  mutate(Death_Status = ifelse(Death_Status == 0, 0, 1)) %>%
+  mutate(Race = ifelse(Race == 'Black' | Race == 'White', Race, "Others")) %>%
+  rename("Tumor_Type" = Derived_AJCC,
+         "Age" = Age_dx) %>%
+  select(-Survival_mos)
+glottic %<>% mutate_each_(funs(factor(.)), c("Tumor_Type", "Sex", "Race", "Rad_Tx_Status", "Death_Status"))
+```
+
+
+```{r}
+# Descriptive table of all variables stratified by death status
+table1 <- table1(~ Tumor_Type + Sex + Age + Race + Rad_Tx_Status | Death_Status, data=glottic)
+```
+
+
+### Description of the problem and scientific question
+
+As one of the most common head and neck malignancies, glottic cancer makes up about 1% of global cancer in 2018 and causes 1% of the cancer deaths worldwide. Treatments for this type of cancer mainly involve surgery, radiation, or a combination of both surgery and radiation. The scientific question for this study is that: What is the effect of different types of treatments on the three-year survival among patients with glottic cancer?
+
+### Description of the dataset
+
+#### Data definitions
+The dataset of glottic cancer is from SEER, and the original data contains 4422 observations and 7 variables. The filtered data contains 3949 observations and 6 variables. There is only one missing value in Age column, so we remove this observation. Also, there are some unknown value in Rad_Tx_Status column (A: Treatment), and we remove all observations with unknown treatment status.
+
+- Tumor_Type: American Joint Committee on Cancer staging classification system
+  - T1a and T1b: The tumor is only in the vocal cords with normal mobility. T1a refers to cancer involvement of only one cord. T1b refers to cancer involvement of both cords.
+  - T2: The tumor is large enough that it goes to the supraglottis and/or subglottis, and/or there is decreased movement of the vocal cord.
+  - T1NOS: T1 tumor not otherwise specified.
+- Sex: Female/Male
+- Age: in years
+- Race: White/Black/Others
+- Rad_Tx_Status: Radiation/Surgery treatment status
+  - 0 = Surgery
+  - 1 = Radiation
+- Death_Status: status at endpoint
+  - 0 = Alive
+  - 1 = Dead Cancer
+
+#### Description of variables
+
+```{r}
+table1
+```
+
+#### Correlation between variables
+
+```{r}
+ggplot(glottic, aes(Age)) +
+  geom_histogram(bins = 30)
+```
+
+```{r}
+library(ggpubr)
+# Tumor_Type + Sex + Age + Race + Rad_Tx_Status | Death_Status
+ggplot(glottic, aes(x = Death_Status, y = Age)) +
+  geom_boxplot(add = "jitter") +
+  stat_compare_means(method = "t.test")
+```
+
+```{r}
+# Tumor_Type
+chisq.test(glottic$Death_Status, glottic$Tumor_Type)
+# Sex
+chisq.test(glottic$Death_Status, glottic$Sex)
+# Race
+chisq.test(glottic$Death_Status, glottic$Race)
+# Rad_Tx_Status
+chisq.test(glottic$Death_Status, glottic$Rad_Tx_Status)
+```
+
+
+##### 1. Specify a Causal Model.
+
+- Endogenous variables: $X=(W_1, W_2, W_3, W_4, A,Y)$
+- Exogenous variables: $U=(U_{W_1},U_{W_2}, U_{W_3}, U_{W_4}, U_A,U_Y)∼P^∗$
+- Structural equations F:
+
+$$W_1 <- f_W(U_{W_1})$$
+$$W_2 <- f_W(U_{W_2})$$
+$$W_3 <- f_W(U_{W_3})$$
+$$W_4 <- f_W(W_1， W_2， W_3，U_{W_4})$$
+$$A <- f_W(U_A, W_3, W_4)$$
+$$Y <- f_W(U_Y, A, W_3, W_4)$$
+
+where $W_1$={Female, Male}, $W_2$={Age}, $W_3$={Black, White, Others}, $W_4$={T1a, T1b, T1NOS, T2}, $A$={Surgery, Radiation}, $Y$={survival}.
+
+
+##### 2. Translate your question into a formal target causal parameter, defined using counter-factuals.
+
+The target causal parameter is the difference in the counterfactual vital status through three years, if all subjects take the treatment of Radiation, and the counterfactual vital status, if all subjects take the treatment of Surgery:
+
+$$P^*(Y_1 = 1) - P^*(Y_0 = 1) = E^*[Y_1] - E^*[Y_0]$$
+where $Y_a$ denotes the counterfactual outcome under an intervention to set treatment  status $A=a$.
+
+##### 3. Specify your observed data and its link to the causal model.
+
+The observed data is $O=(W_1, W_2, W_3, W_4, A,Y)$, where $W_1$={Female, Male}, $W_2$={Age}, $W_3$={Black, White, Others}, $W_4$={T1a, T1b, T1NOS, T2}, $A$={Surgery, Radiation}, $Y$={survival}.
+
+The observed data $O=(W_1, W_2, W_3, W_4, A,Y)$~$P$ were obtained i.i.d. from baseline questionnaires completed by Volunteers. This establishes a link between the SCM causal model and the observed data $O$. In addition, the structural equations $F$ and the distribution of the background variables $U$ define the distribution of the endogenous variables $X$ and consequently the distribution of the observed data $O$.
+
+##### 4. Identify.
+
+In the SCM, the target causal quantity is not identified. If we have more information to have $U_A$ independent on other U, the back-door criterion holds conditional on $W = (W_3, W_4)$. Equivalently, the counterfactual outcome $Y_a$ is conditionally independent of the treatment A, given $W = (W_3, W_4)$.
+
+For identifiability, we also need the positivity assumption to hold:
+
+$$min_{a\in A}P(A=a|W = w) > 0, for\ all\ w\ for\ which\ P(W=w)>0$$
+Here, we are using $W = (W_3, W_4)$ to denote the set of covariates that satisfy the backdoor criteria under the working SCM.
+ 
+##### 5. Commit to a Statistical Model and Estimand (target parameter of the observed datadistribution).
+
+```{r, echo=FALSE, message=FALSE}
+library(dagitty)
+library(ggdag)
+dag <- dagitty("dag{ {Y <- A} <- W4 <- W2
+               W1 -> W4 <- W3 -> {Y <- A}}")
+ggdag(dag, layout = "circle") +
+  theme_dag_blank()
+```
+
+
+##### 6. Estimate.
+
+
