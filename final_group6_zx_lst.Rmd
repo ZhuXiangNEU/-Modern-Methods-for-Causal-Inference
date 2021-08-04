@@ -1,0 +1,459 @@
+---
+title: "Effect of Treatments on Glottic Cancer"
+author: "Xiang Zhu & Shutian Lin (Group 6)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    code_folding: hide
+---
+
+```{r,echo=FALSE}
+knitr::opts_chunk$set(cache=TRUE, error=FALSE, message=FALSE, warning=FALSE, tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+
+```{r, results = FALSE}
+library(tidyverse)
+library(readxl)
+library(table1)
+library(magrittr)
+library(dplyr)
+
+glottic <- read_excel("Glottic_Cancer_Data_Set_011521.xlsx")
+
+# Check for missing value for each column
+apply(glottic, 2, function(x) {
+    sum(is.na(x))
+})
+```
+
+```{r}
+glottic <- glottic %>%
+  filter(Death_Status != 1) %>%
+  filter(!is.na(Age_dx)) %>%
+  filter(Rad_Tx_Status != "U", Rad_Tx_Status == "0.00" | Rad_Tx_Status == "1.00") %>%
+  mutate(Rad_Tx_Status = as.numeric(Rad_Tx_Status)) %>%
+  mutate(Death_Status = ifelse(Death_Status == 0, 0, 1)) %>%
+  mutate(Race = ifelse(Race == 'Black' | Race == 'White', Race, "Others")) %>%
+  rename("Tumor_Type" = Derived_AJCC,
+         "Age" = Age_dx) %>%
+  select(-Survival_mos)
+glottic %<>% mutate_each_(funs(factor(.)), c("Tumor_Type", "Sex", "Race", "Rad_Tx_Status", "Death_Status"))
+```
+
+
+```{r}
+# Descriptive table of all variables stratified by death status
+table1 <- table1(~ Tumor_Type + Sex + Age + Race + Rad_Tx_Status | Death_Status, data=glottic)
+```
+
+
+### Description of the problem and scientific question
+
+As one of the most common head and neck malignancies, glottic cancer makes up about 1% of global cancer in 2018 and causes 1% of the cancer deaths worldwide. Treatments for this type of cancer mainly involve surgery, radiation, or a combination of both surgery and radiation. The scientific question for this study is that: What is the effect of different types of treatments on the three-year survival among patients with glottic cancer?
+
+### Description of the dataset
+
+#### Data definitions
+The dataset of glottic cancer is from SEER, and the original data contains 4422 observations and 7 variables. The filtered data contains 3949 observations and 6 variables. There is only one missing value in Age column, so we remove this observation. Also, there are some unknown value in Rad_Tx_Status column (A: Treatment), and we remove all observations with unknown treatment status.
+
+- Tumor_Type: American Joint Committee on Cancer staging classification system
+  - T1a and T1b: The tumor is only in the vocal cords with normal mobility. T1a refers to cancer involvement of only one cord. T1b refers to cancer involvement of both cords.
+  - T2: The tumor is large enough that it goes to the supraglottis and/or subglottis, and/or there is decreased movement of the vocal cord.
+  - T1NOS: T1 tumor not otherwise specified.
+- Sex: Female/Male
+- Age: in years
+- Race: White/Black/Others
+- Rad_Tx_Status: Radiation/Surgery treatment status
+  - 0 = Surgery
+  - 1 = Radiation
+- Death_Status: status at endpoint
+  - 0 = Alive
+  - 1 = Dead Cancer
+
+#### Description of variables
+
+```{r}
+table1
+```
+
+#### Correlation between variables
+
+```{r}
+library(ggpubr)
+# Tumor_Type + Sex + Age + Race + Rad_Tx_Status | Death_Status
+ggplot(glottic, aes(x = Death_Status, y = Age)) +
+  geom_boxplot(add = "jitter") +
+  stat_compare_means(method = "t.test")
+
+```
+
+```{r}
+ggplot(glottic, aes(x = Age, color = Death_Status)) +
+  geom_histogram(bins = 30, position="identity", fill="white")
+```
+
+```{r}
+# Tumor_Type
+chisq.test(glottic$Death_Status, glottic$Tumor_Type)
+# Sex
+chisq.test(glottic$Death_Status, glottic$Sex)
+# Race
+chisq.test(glottic$Death_Status, glottic$Race)
+# Rad_Tx_Status
+chisq.test(glottic$Death_Status, glottic$Rad_Tx_Status)
+```
+
+
+### 1. Specify a Causal Model.
+
+- Endogenous variables: $X=(W_1, W_2, W_3, W_4, \ A,\ Y)$
+- Exogenous variables: $U=(U_{W_1},U_{W_2}, U_{W_3}, U_{W_4}, U_A,U_Y)∼P^∗$
+- Structural equations F:
+
+$$W_1 \gets f_W(U_{W_1})$$
+$$W_2 \gets f_W(U_{W_2})$$
+$$W_3 \gets f_W(U_{W_3})$$
+$$W_4 \gets f_W(W_1, W_2, W_3, U_{W_4})$$
+$$A \gets f_W(U_A, W_3, W_4)$$
+$$Y \gets f_W(U_Y, A, W_3, W_4)$$
+
+where $W_1$={Female, Male}, $W_2$={Black, White, Others}, $W_3$={Age}, $W_4$={T1a, T1b, T1NOS, T2}, $A$={Surgery, Radiation}, $Y$={survival}.
+
+
+### 2. Translate your question into a formal target causal parameter, defined using counter-factuals.
+
+The target causal parameter is the difference in the counterfactual vital status through three years, if all subjects take the treatment of Radiation, and the counterfactual vital status, if all subjects take the treatment of Surgery:
+
+$$P^*(Y_1 = 1) - P^*(Y_0 = 1) = E^*[Y_1] - E^*[Y_0]$$
+where $Y_a$ denotes the counterfactual outcome under an intervention to set treatment  status $A=a$.
+
+### 3. Specify your observed data and its link to the causal model.
+
+The observed data is $O=(W_1, W_2, W_3, W_4, A,Y)$, where $W_1$={$Female, Male$}, $W_2=\{Black,\ White,\ Others\}$, $W_3 =\{Age\}$, $W_4=\{T1a, T1b, T1NOS, T2\}$, $A=\{Surgery,\ Radiation\}$, $Y=\{Survival\}$.
+
+The observed data $O=(W_1, W_2, W_3, W_4,\ A,\ Y)$ ~ $P$ were obtained i.i.d. from baseline questionnaires completed by Volunteers. This establishes a link between the SCM causal model and the observed data $O$. In addition, the structural equations $F$ and the distribution of the background variables $U$ define the distribution of the endogenous variables $X$ and consequently the distribution of the observed data $O$.
+
+### 4. Identify.
+
+In the SCM, the target causal quantity is not identified. If we have more information to have $U_A$ independent on other U, the back-door criterion holds conditional on $W = (W_3, W_4)$. Equivalently, the counterfactual outcome $Y_a$ is conditionally independent of the treatment A, given $W = (W_3, W_4)$.
+
+For identifiability, we also need the positivity assumption to hold:
+
+$$min_{a\in A}P(A=a|W = w) > 0, for\ all\ w\ for\ which\ P(W=w)>0$$
+Here, we are using $W = (W_3, W_4)$ to denote the set of covariates that satisfy the backdoor criteria under the working SCM.
+ 
+### 5. Commit to a Statistical Model and Estimand (target parameter of the observed datadistribution).
+
+```{r, echo=FALSE, message=FALSE}
+library(dagitty)
+library(ggdag)
+dag <- dagitty("dag{ {Y <- A} <- W4 <- W2
+               W1 -> W4 <- W3 -> {Y <- A}}")
+ggdag(dag, layout = "circle") +
+  theme_dag_blank()
+```
+
+- G-Computation formula:
+$$\hat{\theta}_{G-comp}=E[E[Y|A,W]-E[Y]]=\sum_w [E(Y|A=1,W=w)-E(Y|A=0, W=w)]P(W=w)$$
+where $W = (W_3, W_4)$.
+
+- IPTW：
+$$\hat{\theta}_{IPTW}=E[(\frac{I(A=1)}{P(A=1|W)} - \frac{I(A=0)}{P(A=0|W)})]$$
+
+
+- TMLE：
+$$\hat{\theta}_{TMLE}=\frac{1}{n}\sum_{i=1}^{n}[m(A_i, W_i)]$$
+
+- AIPW:
+$$\hat{\theta}_{AIPW}=\frac{1}{n}\sum_{i=1}^{n} \{ \frac{A_i}{\hat{g}(W_i)}[Y_i - \hat{m}(W_i)] + \hat{m}(W_i) \}$$
+
+
+### 6. Estimate.
+```{r}
+ObsData <- glottic
+n <- nrow(ObsData)
+
+# W1={Female, Male}, W2={Black, White, Others}, W_3={Age}, W_4={T1a, T1b, T1NOS, T2}, A={Surgery, Radiation}, Y={survival}.
+names(ObsData) <- c("W4", "W1", "W3", "W2", "Y", "A")
+
+ObsData$Y <- as.numeric(ObsData$Y) - 1
+ObsData$A <- as.numeric(ObsData$A) - 1
+
+head(ObsData)
+```
+
+#### 1. G-computation
+
+We use glm() function estimate E(Y|A,W) based on the following parametric regression model:
+$E(Y|A,W)=expit(β_0+β_1W_3+β_2W_4)$
+
+The average treatment effect (ATE) by parametric G-computation:
+```{r}
+glm.gcomp <- glm(Y ~ A + W3 + W4, family="binomial", data=ObsData)
+glm.gcomp$coef
+
+trt <- ObsData %>% mutate(A = 1)
+ctrl <- ObsData %>% mutate(A = 0)
+
+predict.trt <- predict(glm.gcomp, newdata = trt, type = 'response')
+predict.ctrl <- predict(glm.gcomp, newdata = ctrl, type = 'response')
+G_comp <- mean(predict.trt-predict.ctrl)
+G_comp
+```
+
+- Use Super Learner for G-computation
+We also use super learner to estimate E(Y|A,W), and get simple substitution estimator based on the G-Computation formula.
+
+The statistical parameter by substituting the targeted predictions into the G-Computation formula:
+```{r}
+library(SuperLearner)
+library(tidyverse)
+
+SL_library <- c("SL.glm", "SL.step", "SL.glm.interaction", "SL.mean")
+
+X = dplyr::select(ObsData, A, W3, W4)
+X1 <- X %>% mutate(A = 1)
+X0 <- X %>% mutate(A = 0)
+
+SL_gcomp <- SuperLearner(
+  ObsData$Y,
+  X,
+  SL.library = SL_library,
+  cvControl = list(V = 10),
+  family = "binomial"
+)
+
+mAW <- predict(SL_gcomp, newdata = X)$pred
+m1W <- predict(SL_gcomp, newdata = X1)$pred
+m0W <- predict(SL_gcomp, newdata = X0)$pred
+
+theta.gcomp.SL <- mean(m1W - m0W)
+theta.gcomp.SL
+```
+
+#### 2. Standard (unstabilized) inverse probability weighted estimator (IPTW)
+
+-  Examine the distribution of the predicted probabilities.
+```{r}
+# 1.  Estimate the treatment mechanism P(A|W)
+prob.AW.reg<- glm(A ~ W3 +W4, family="binomial", data=ObsData)
+prob.AW.reg$coef
+# 2. Predicted probability of having scurvy
+prob.1W <- predict(prob.AW.reg, type= "response")
+prob.0W <- 1 - prob.1W
+prob.AW <- rep(NA, n)
+prob.AW[ObsData$A==1] <- prob.1W[ObsData$A==1]
+prob.AW[ObsData$A==0] <- prob.0W[ObsData$A==0]
+summary(prob.AW)
+```
+
+
+- Create a vector wt as the inverse of the predicted probabilities.
+```{r}
+# Each subject gets a weight inverse weight inverse to pred prob
+wt<- 1/prob.AW
+# look at the distribution of weights
+summary(wt)
+```
+
+- Evaluate the IPTW estimand by taking the empirical mean of the weighted outcomes
+```{r}
+IPTW<- mean(wt*as.numeric(ObsData$A==1)*ObsData$Y)-mean(wt*as.numeric(ObsData$A==0)*ObsData$Y)
+IPTW
+```
+
+- Implement the stabilized IPTW estimator
+```{r}
+# Arbitrarily truncate the weights at 4
+wt.trunc<- wt
+wt.trunc[ wt.trunc>4] <-4
+
+# evaluate the IPTW estimand with the truncated weights
+mean( wt.trunc*as.numeric(ObsData$A==1)*ObsData$Y) -  
+  mean( wt.trunc*as.numeric(ObsData$A==0)*ObsData$Y)
+```
+
+```{r}
+hist(wt[ObsData$A==1])
+
+hist(wt[ObsData$A==0])
+
+hist(wt.trunc[ObsData$A==1])
+
+hist(wt.trunc[ObsData$A==0])
+```
+
+- Super Learner for IPTW
+```{r}
+Y = ObsData$A
+X = dplyr::select(ObsData, W3, W4)
+SL_IPTW <- SuperLearner(
+  Y,
+  X,
+  SL.library = SL_library,
+  cvControl = list(V = 10),
+  family = "binomial"
+)
+
+g_1W <- SL_IPTW$SL.predict
+g_0W <- 1 - g_1W
+
+H_AW <- as.integer(ObsData$A == 1)/g_1W - as.integer(ObsData$A == 0)/g_0W
+
+IPTW.SL <- mean(H_AW * ObsData$Y)
+IPTW.SL
+```
+
+The $\hat \theta$ from IPTW means that the counterfactual probability of survival of patient would be 0.0168 units higher if all patients receive Radiation than if all patients receive surgery. 
+
+#### 3. Targeted maximum likelihood estimation (TMLE)
+
+- Use Super Learner for TMLE
+```{r}
+H_1W <- 1 / g_1W
+H_0W <- -1 / g_0W
+
+logitUpdate <- glm(ObsData$Y ~ -1 + offset(qlogis(mAW)) + H_AW, family = 'binomial')
+epsilon <- logitUpdate$coef
+
+m1W.star <- plogis(qlogis(m1W) + epsilon * H_1W)
+m0W.star <- plogis(qlogis(m0W) + epsilon * H_0W)
+
+
+TMLE.SL <- mean(m1W.star - m0W.star)
+TMLE.SL
+```
+
+- Use tmle package
+```{r}
+library(tmle)
+
+Y <- ObsData$Y
+A <- ObsData$A
+W <- ObsData %>%  select(W3, W4)
+tmle <- tmle(
+  Y,
+  A,
+  W,
+  Q.SL.library=SL_library,
+  g.SL.library=SL_library,
+  family="binomial")
+summary(tmle)
+```
+
+
+#### 4. Augmented inverse probability weighting (AIPW)
+
+- Use Super Learner for AIPW
+```{r}
+AIPW.SL <- mean((as.numeric(ObsData$A == 1)/g_1W) * (ObsData$Y - m1W) + m1W - m0W)
+AIPW.SL
+```
+
+- Use AIPW package
+```{r}
+library(AIPW)
+
+AIPW_SL <- AIPW$new(Y = Y,
+                    A = A,
+                    W = W, 
+                    Q.SL.library = SL_library,
+                    g.SL.library = SL_library,
+                    k_split = 3,
+                    verbose=FALSE)$
+  fit()$
+  #Default truncation is set to 0.025; using 0.25 here is for illustrative purposes and not recommended
+  summary(g.bound = 0.25)$ 
+  plot.p_score()$
+  plot.ip_weights()
+
+print(AIPW_SL$result, digits = 2)
+```
+
+IPTW gives the largest number, and the estimate of simple substitution gives the smallest number.
+
+#### 5. Estimate of the cross-validated risk of the Super Learner
+```{r}
+X <- subset(ObsData, select = c(A, W3, W4))
+CV.SL <- CV.SuperLearner(Y = Y, X = X, family = 'gaussian', SL.library = SL_library,
+                         cvControl = list(V = 5), innerCvControl = list(list(V = 10)))
+summary(CV.SL)
+
+CV.SL$AllSL
+
+CV.SL$coef
+
+CV.SL$whichDiscrete
+```
+
+
+#### 6. Implementing the non-parametric bootstrap
+```{r}
+set.seed(123)
+
+# function to calculate the G-comp, IPTW, TMLE, AIPW
+estimates <- function(df) {
+    # G-comp
+    X <- subset(df, select = c(A, W3, W4))
+    X1 <- X %>% mutate(A = 1)
+    X0 <- X %>% mutate(A = 0)
+    SL.outcome <- SuperLearner(Y = df$Y,
+                               X = X,
+                               SL.library = SL_library,
+                               family = "binomial")
+    mAW <- predict(SL.outcome, newdata = X)$pred
+    m1W <- predict(SL.outcome, newdata = X1)$pred
+    m0W <- predict(SL.outcome, newdata = X0)$pred
+    gcomp <- mean(m1W - m0W)
+    
+    # IPTW
+    gHat.SL <- SuperLearner(Y = df$A,
+                            X = subset(df, select = -c(A, Y)),
+                            SL.library = SL_library,
+                            family = "binomial")
+    gHat1W <- gHat.SL$SL.predict
+    gHat0W <- 1 - gHat1W
+    H.AW <- as.numeric(df$A == 1) / gHat1W - as.numeric(df$A == 0) / gHat0W
+    H.1W <- 1 / gHat1W
+    H.0W <- -1 / gHat0W
+    iptw <- mean(H.AW * df$Y)
+    
+    # TMLE
+    logitUpdate <- glm(df$Y ~ -1 + offset(qlogis(mAW)) + H.AW, family = 'binomial')
+    epsilon <- logitUpdate$coef
+    m1W.star <- plogis(qlogis(m1W) + epsilon * H.1W)
+    m0W.star <- plogis(qlogis(m0W) + epsilon * H.0W)
+    tmle <- mean(m1W.star - m0W.star)
+    
+    # AIPW
+    aipw <- mean((as.numeric(df$A == 1) / gHat1W) * (df$Y - m1W) + m1W - m0W)
+    
+    return(c(gcomp, iptw, tmle, aipw))
+}
+
+B <- 40
+result <- data.frame(matrix(NA, nrow = B, ncol = 4))
+for (b in 1:B) {
+    index <- sample(1:n, n/2, replace = T)
+    df <- ObsData[index, ]
+    result[b, ] <- estimates(df)
+}
+
+par(mfrow=c(2,2))
+
+hist(result[,1], main="G-computation", xlab = "Point estimates")
+hist(result[,2], main="IPTW", xlab = "Point estimates")
+hist(result[,3], main="TMLE", xlab = "Point estimates")
+hist(result[,4], main="AIPW", xlab = "Point estimates")
+```
+
+In the plot above, the number of loop for bootstrap is 40 so that we get 40 estimation of $\hat θ$ for each method we use above and we observe the distribution for each bootstrap method. From the plot, we observe that the distribution obtained from G-computation, IPTW and AIPW estimator is right-skewed. The distribution obtained from TMLE appears to be symmetric. From the interval that contains the most values, we observe that the intervals for all methods lie on -0.02 ~ 0.05.
+
+
+#### Reference
+1. Chen JJ, Stessin A, Christos P, Wernicke AG, Nori D, Parashar B. Differences in survival outcome between stage I and stage II glottic cancer: A SEER-based analysis. Laryngoscope. 2015;125(9):2093-2098. doi:10.1002/lary.25338
+
